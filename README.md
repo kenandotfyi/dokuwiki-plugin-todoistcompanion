@@ -1,0 +1,41 @@
+# TodoistCompanion
+
+Add tasks to a DokuWiki page and sync them to a Todoist project named **Wiki**.
+The page is where tasks are created and completed; Todoist remains the reminder
+and task-management app.
+
+## Setup
+
+1. Enable **TodoistCompanion** in DokuWiki's Extension Manager.
+2. Locally, open **Admin → TodoistCompanion** and enter a personal Todoist API token. In production, set `TODOIST_API_TOKEN` as a runtime environment variable for the DokuWiki container; it takes precedence over the saved configuration value.
+3. Set the destination project name if you want a name other than `Wiki`; use **Test connection** to check the saved or newly entered token.
+4. Ensure the DokuWiki PHP server can make outbound HTTPS requests to
+   `api.todoist.com`.
+
+The admin page stores a local-development token in DokuWiki's plugin configuration, never displays its value, and lets an administrator replace or remove it. When `TODOIST_API_TOKEN` is present, the admin page shows that the deployment environment controls the token and provides a connection test. The plugin finds an existing project with the configured name or creates it
+when it first syncs a task. Keep the token private: it is used only by the
+server and is never sent to the browser.
+
+## Add and complete tasks
+
+In the page editor, use the TodoistCompanion toolbar button and enter the task
+text. It inserts a page-local task marker with an 8-character ID, such as:
+
+```text
+{{todoistcompanion>add a reference to the capacitor datasheet|id=8f2k9m1d}}
+```
+
+After the page is saved, new markers are sent to the configured Todoist
+project. Saving the page again does not create another Todoist task. The task
+includes a link back to its wiki page. Complete it using the checkbox next to
+the task in the rendered page; the plugin closes it in Todoist as well. Task
+status is fetched from DokuWiki's persistent metadata on each page view, so it
+stays correct even when the rendered page is cached. Changes made directly in
+Todoist are not imported.
+
+Task-to-Todoist ID mappings and completion state are stored persistently under
+`data/meta/todoistcompanion`, separate from DokuWiki's rebuildable cache.
+
+Use `~~TODOS~~` on a page to show the current tasks found across readable wiki
+pages. The TodoistCompanion admin page also lists all current task markers. Both
+views read current page content rather than relying on a manual scan.
