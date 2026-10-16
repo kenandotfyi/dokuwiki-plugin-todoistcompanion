@@ -26,7 +26,7 @@ class admin_plugin_todoistcompanion extends AdminPlugin
         }
 
         if ($INPUT->post->has('todoistcompanion_test')) {
-            $token = $this->environmentToken();
+            $token = $this->deploymentToken();
             if ($token === '') $token = trim($INPUT->post->str('api_token'));
             if ($token === '') $token = trim((string)$this->getConf('api_token'));
             if (!$this->validToken($token)) {
@@ -41,8 +41,8 @@ class admin_plugin_todoistcompanion extends AdminPlugin
 
         $token = trim($INPUT->post->str('api_token'));
         $clearToken = $INPUT->post->bool('clear_api_token');
-        $environmentToken = $this->environmentToken();
-        if ($environmentToken !== '') {
+        $deploymentToken = $this->deploymentToken();
+        if ($deploymentToken !== '') {
             // The runtime secret is authoritative; this page only edits the project name.
             $token = '';
             $clearToken = false;
@@ -87,8 +87,10 @@ class admin_plugin_todoistcompanion extends AdminPlugin
     {
         global $ID;
         $tokenConfigured = trim((string)$this->getConf('api_token')) !== '';
+        $secretConfigured = $this->secretFileToken() !== '';
         $environmentConfigured = $this->environmentToken() !== '';
-        $anyTokenConfigured = $environmentConfigured || $tokenConfigured;
+        $deploymentConfigured = $secretConfigured || $environmentConfigured;
+        $anyTokenConfigured = $deploymentConfigured || $tokenConfigured;
         $projectName = (string)$this->getConf('project_name');
         $tokenSetting = null;
         $projectSetting = null;
@@ -98,7 +100,7 @@ class admin_plugin_todoistcompanion extends AdminPlugin
             $projectSetting = $settings['plugin____todoistcompanion____project_name'] ?? null;
         }
         $configLocked = !class_exists(Configuration::class) || (new Configuration())->isLocked();
-        $tokenDisabled = $configLocked || !$tokenSetting || $tokenSetting->isProtected() || $environmentConfigured;
+        $tokenDisabled = $configLocked || !$tokenSetting || $tokenSetting->isProtected() || $deploymentConfigured;
         $projectDisabled = $configLocked || !$projectSetting || $projectSetting->isProtected();
         $testDisabled = !$anyTokenConfigured && $tokenDisabled;
 
@@ -106,12 +108,12 @@ class admin_plugin_todoistcompanion extends AdminPlugin
         echo '<h1>' . hsc($this->getLang('heading')) . '</h1>';
         echo '<p>' . hsc($this->getLang('intro')) . '</p>';
         if (!$tokenSetting || !$projectSetting) echo '<p class="error">' . hsc($this->getLang('config_unavailable')) . '</p>';
-        elseif ($projectDisabled && !$environmentConfigured) echo '<p class="info">' . hsc($this->getLang('protected')) . '</p>';
+        elseif ($projectDisabled && !$deploymentConfigured) echo '<p class="info">' . hsc($this->getLang('protected')) . '</p>';
         foreach ($this->errors as $error) echo '<p class="error" role="alert">' . hsc($error) . '</p>';
         if ($this->notice !== '') echo '<p class="success" role="status">' . hsc($this->notice) . '</p>';
 
         echo '<h2>' . hsc($this->getLang('connection')) . '</h2>';
-        $tokenMessage = $environmentConfigured ? 'token_from_environment' : ($tokenConfigured ? 'token_present' : 'token_missing');
+        $tokenMessage = $secretConfigured ? 'token_from_secret' : ($environmentConfigured ? 'token_from_environment' : ($tokenConfigured ? 'token_present' : 'token_missing'));
         echo '<p>' . hsc($this->getLang($tokenMessage)) . '</p>';
         echo '<form action="' . hsc(script()) . '" method="post">';
         echo '<input type="hidden" name="id" value="' . hsc($ID) . '">';
@@ -119,8 +121,9 @@ class admin_plugin_todoistcompanion extends AdminPlugin
         formSecurityToken();
         echo '<table class="inline"><tbody>';
         echo '<tr><th>' . hsc($this->getLang('api_token')) . '</th><td>';
-        if ($environmentConfigured) {
-            echo '<p>' . hsc($this->getLang('environment_token_help')) . '</p>';
+        if ($deploymentConfigured) {
+            $tokenHelp = $secretConfigured ? 'secret_token_help' : 'environment_token_help';
+            echo '<p>' . hsc($this->getLang($tokenHelp)) . '</p>';
         } else {
             echo '<label for="todoistcompanion-api-token">' . hsc($this->getLang('api_token')) . '</label><br>';
             echo '<input id="todoistcompanion-api-token" type="password" name="api_token" value="" maxlength="4096" autocomplete="new-password" spellcheck="false"' . ($tokenDisabled ? ' disabled' : '') . '>';
@@ -161,10 +164,24 @@ class admin_plugin_todoistcompanion extends AdminPlugin
         return $token !== '' && strlen($token) <= 4096 && !preg_match('/[\r\n]/', $token);
     }
 
+    private function secretFileToken()
+    {
+        $path = '/run/secrets/todoist_api_token';
+        if (!is_readable($path)) return '';
+        $token = @file_get_contents($path);
+        return is_string($token) ? trim($token) : '';
+    }
+
     private function environmentToken()
     {
         $token = getenv('TODOIST_API_TOKEN');
         return is_string($token) ? trim($token) : '';
+    }
+
+    private function deploymentToken()
+    {
+        $token = $this->secretFileToken();
+        return $token !== '' ? $token : $this->environmentToken();
     }
 
     private function testConnection($token)

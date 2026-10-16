@@ -284,6 +284,12 @@ class action_plugin_todoistcompanion extends DokuWiki_Action_Plugin
 
     private function apiToken()
     {
+        $secretFile = '/run/secrets/todoist_api_token';
+        if (is_readable($secretFile)) {
+            $secretToken = @file_get_contents($secretFile);
+            if (is_string($secretToken) && trim($secretToken) !== '') return trim($secretToken);
+        }
+
         $environmentToken = getenv('TODOIST_API_TOKEN');
         if (is_string($environmentToken) && trim($environmentToken) !== '') return trim($environmentToken);
         return trim((string)$this->getConf('api_token'));

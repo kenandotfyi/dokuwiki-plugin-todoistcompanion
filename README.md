@@ -7,12 +7,12 @@ and task-management app.
 ## Setup
 
 1. Enable **TodoistCompanion** in DokuWiki's Extension Manager.
-2. Locally, open **Admin → TodoistCompanion** and enter a personal Todoist API token. In production, set `TODOIST_API_TOKEN` as a runtime environment variable for the DokuWiki container; it takes precedence over the saved configuration value.
+2. Locally, open **Admin → TodoistCompanion** and enter a personal Todoist API token. In production with Docker Compose, configure `TODOIST_API_TOKEN` in the deployment environment and expose it to the DokuWiki service as a Compose secret named `todoist_api_token`.
 3. Set the destination project name if you want a name other than `Wiki`; use **Test connection** to check the saved or newly entered token.
 4. Ensure the DokuWiki PHP server can make outbound HTTPS requests to
    `api.todoist.com`.
 
-The admin page stores a local-development token in DokuWiki's plugin configuration, never displays its value, and lets an administrator replace or remove it. When `TODOIST_API_TOKEN` is present, the admin page shows that the deployment environment controls the token and provides a connection test. The plugin finds an existing project with the configured name or creates it
+The admin page stores a local-development token in DokuWiki's plugin configuration, never displays its value, and lets an administrator replace or remove it. In production, the plugin reads `/run/secrets/todoist_api_token` first, then checks `TODOIST_API_TOKEN`, then falls back to the saved DokuWiki token. The secret-file route works with PHP-FPM configurations that clear process environment variables. The admin page reports when a deployment secret or environment variable controls the token and provides a connection test. The plugin finds an existing project with the configured name or creates it
 when it first syncs a task. Keep the token private: it is used only by the
 server and is never sent to the browser.
 
