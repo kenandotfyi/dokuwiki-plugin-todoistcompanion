@@ -1,8 +1,8 @@
 # TodoistCompanion
 
 Add tasks to a DokuWiki page and sync them to a Todoist project named **Wiki**.
-The page is where tasks are created and completed; Todoist remains the reminder
-and task-management app.
+The page is where tasks are created and completed; Todoist stores each task's
+optional due date and time.
 
 ## Setup
 
@@ -18,12 +18,18 @@ server and is never sent to the browser.
 
 ## Add and complete tasks
 
-In the page editor, use the TodoistCompanion toolbar button and enter the task
-text. It inserts a page-local task marker with an 8-character ID, such as:
+In the page editor, use the TodoistCompanion toolbar button to open the task
+dialog, enter the task text, and optionally choose a due date and time. It
+inserts a page-local task marker with an 8-character ID, such as:
 
 ```text
 {{todoistcompanion>add a reference to the capacitor datasheet|id=8f2k9m1d}}
 ```
+
+When a due date is selected, the marker also stores the local date, time, and
+time zone, for example `|due=2026-10-20T09:30|tz=Europe/Berlin`. After the
+page is saved, TodoistCompanion creates or updates the Todoist task's due
+date and time.
 
 After the page is saved, new markers are sent to the configured Todoist
 project. Saving the page again does not create another Todoist task. The task

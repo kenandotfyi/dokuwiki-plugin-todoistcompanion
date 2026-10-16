@@ -108,6 +108,7 @@ class action_plugin_todoistcompanion extends DokuWiki_Action_Plugin
                 'synced' => !empty($record['todoist_id']),
                 'completed' => !empty($record['completed']),
                 'canComplete' => !empty($record['todoist_id']) && empty($record['completed']) && auth_quickaclcheck($pageId) >= AUTH_EDIT,
+                'duePending' => !empty($record['due_datetime_local']) && ($record['due_status'] ?? '') !== 'synced',
             ]);
             return;
         }
@@ -156,23 +157,29 @@ class action_plugin_todoistcompanion extends DokuWiki_Action_Plugin
         foreach ($matches as $match) {
             $parsed = $this->parseTaskSyntax($match[1]);
             if (!$parsed) continue;
-            [$key, $title] = $parsed;
+            [$key, $title, $dueLocal, $timezone] = $parsed;
             if (isset($tasks[$key]) && ($tasks[$key]['page'] ?? '') === $pageId) {
                 $tasks[$key]['title'] = $title;
                 $tasks[$key]['updated_at'] = time();
                 if (empty($tasks[$key]['todoist_id']) && $this->apiToken() !== '') {
-                    $result = $this->createTodoistTask($key, $pageId, $title);
+                    $result = $this->createTodoistTask($key, $pageId, $title, $dueLocal, $timezone);
                     if ($result) {
                         $tasks[$key]['todoist_id'] = $result['id'];
                         $tasks[$key]['status'] = 'synced';
+                        if ($dueLocal !== null) {
+                            $tasks[$key]['due_datetime_local'] = $dueLocal;
+                            $tasks[$key]['due_timezone'] = $timezone;
+                            $tasks[$key]['due_status'] = !empty($result['due_set']) ? 'synced' : 'pending';
+                        }
                     }
                 }
+                if ($dueLocal !== null) $this->syncTaskDueDate($tasks[$key], $dueLocal, $timezone);
                 continue;
             }
             // Avoid attaching an ID collision to an unrelated page/task.
             if (isset($tasks[$key])) continue;
 
-            $result = $this->apiToken() !== '' ? $this->createTodoistTask($key, $pageId, $title) : null;
+            $result = $this->apiToken() !== '' ? $this->createTodoistTask($key, $pageId, $title, $dueLocal, $timezone) : null;
             $tasks[$key] = [
                 'page' => $pageId,
                 'title' => $title,
@@ -181,17 +188,62 @@ class action_plugin_todoistcompanion extends DokuWiki_Action_Plugin
                 'status' => $result ? 'synced' : 'pending',
                 'updated_at' => time(),
             ];
+            if ($dueLocal !== null) {
+                $tasks[$key]['due_datetime_local'] = $dueLocal;
+                $tasks[$key]['due_timezone'] = $timezone;
+                $tasks[$key]['due_status'] = !empty($result['due_set']) ? 'synced' : 'pending';
+            }
         }
         $this->saveTasks($tasks);
     }
 
     private function parseTaskSyntax($body)
     {
-        if (!preg_match('/^(.*?)\|id=((?:[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}|[a-z0-9]{8}))$/is', trim($body), $parts)) return null;
+        if (!preg_match('/^(.*?)\|id=((?:[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}|[a-z0-9]{8}))(?:\|(?:due|reminder)=(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})\|tz=([A-Za-z0-9_+.-]+(?:\/[A-Za-z0-9_+.-]+)*))?$/is', trim($body), $parts)) return null;
         $title = trim($parts[1]);
         $key = strtolower($parts[2]);
         if ($title === '' || !$this->validTaskKey($key)) return null;
-        return [$key, $title];
+        $dueLocal = $parts[3] ?? null;
+        $timezone = $parts[4] ?? null;
+        if ($dueLocal !== null && !$this->validDueDateTime($dueLocal, $timezone)) return null;
+        return [$key, $title, $dueLocal, $timezone];
+    }
+
+    private function validDueDateTime($dateTime, $timezone)
+    {
+        if (!is_string($dateTime) || !is_string($timezone) || !preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/', $dateTime)) return false;
+        try {
+            $zone = new DateTimeZone($timezone);
+            $date = DateTimeImmutable::createFromFormat('!Y-m-d\\TH:i', $dateTime, $zone);
+            $errors = DateTimeImmutable::getLastErrors();
+            return $date !== false && ($errors === false || ($errors['warning_count'] === 0 && $errors['error_count'] === 0)) && $date->format('Y-m-d\\TH:i') === $dateTime;
+        } catch (Exception $error) {
+            return false;
+        }
+    }
+
+    private function todoistDueDateTime($dateTime, $timezone)
+    {
+        if (!$this->validDueDateTime($dateTime, $timezone)) return null;
+        $zone = new DateTimeZone($timezone);
+        $date = DateTimeImmutable::createFromFormat('!Y-m-d\\TH:i', $dateTime, $zone);
+        return $date ? $date->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\\TH:i:s\\Z') : null;
+    }
+
+    private function syncTaskDueDate(array &$task, $dateTime, $timezone)
+    {
+        if (!$this->validDueDateTime($dateTime, $timezone)) return;
+        $sameDue = ($task['due_datetime_local'] ?? '') === $dateTime && ($task['due_timezone'] ?? '') === $timezone;
+        $task['due_datetime_local'] = $dateTime;
+        $task['due_timezone'] = $timezone;
+        if ($sameDue && ($task['due_status'] ?? '') === 'synced') return;
+        $task['due_status'] = 'pending';
+        if (empty($task['todoist_id'])) return;
+
+        $dueDateTime = $this->todoistDueDateTime($dateTime, $timezone);
+        if ($dueDateTime === null) return;
+        $result = $this->request('POST', '/tasks/' . rawurlencode((string)$task['todoist_id']), ['due_datetime' => $dueDateTime]);
+        if (is_array($result) && (!empty($result['id']) || !empty($result['ok']))) $task['due_status'] = 'synced';
     }
 
     private function validTaskKey($key)
@@ -202,19 +254,28 @@ class action_plugin_todoistcompanion extends DokuWiki_Action_Plugin
         );
     }
 
-    private function createTodoistTask($key, $pageId, $title)
+    private function createTodoistTask($key, $pageId, $title, $dueLocal = null, $timezone = null)
     {
         $projectId = $this->getOrCreateProject();
         if (!$projectId) return null;
         global $conf;
         $url = wl($pageId, [], true, '&');
-        $result = $this->request('POST', '/tasks', [
+        $payload = [
             'content' => $title,
             'description' => 'Wiki page: ' . $url . "\n\nDokuWiki task key: " . $key,
             'project_id' => $projectId,
-        ]);
+        ];
+        $dueSet = false;
+        if ($dueLocal !== null) {
+            $dueDateTime = $this->todoistDueDateTime($dueLocal, $timezone);
+            if ($dueDateTime !== null) {
+                $payload['due_datetime'] = $dueDateTime;
+                $dueSet = true;
+            }
+        }
+        $result = $this->request('POST', '/tasks', $payload);
         if (!is_array($result) || empty($result['id'])) return null;
-        return ['id' => (string)$result['id']];
+        return ['id' => (string)$result['id'], 'due_set' => $dueSet];
     }
 
     private function getOrCreateProject()
@@ -335,12 +396,13 @@ class action_plugin_todoistcompanion extends DokuWiki_Action_Plugin
             foreach ($matches as $match) {
                 $parsed = $this->parseTaskSyntax($match[1]);
                 if (!$parsed) continue;
-                [$key, $title] = $parsed;
+                [$key, $title, $dueLocal] = $parsed;
                 $record = $stored[$key] ?? [];
                 if (!empty($record['page']) && $record['page'] !== $pageId) $record = [];
                 $result[] = [
                     'key' => $key,
                     'title' => $title,
+                    'due' => $dueLocal ?? '',
                     'page' => $pageId,
                     'todoist_id' => (string)($record['todoist_id'] ?? ''),
                     'completed' => !empty($record['completed']),

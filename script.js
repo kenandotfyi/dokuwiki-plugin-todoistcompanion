@@ -1,8 +1,69 @@
 function addBtnActionTodoistcompanion($btn, props, edid) {
     $btn.on('click', function (event) {
         event.preventDefault();
-        const title = window.prompt('Task to add to Todoist:');
-        if (!title || !title.trim()) return false;
+        const dialog = getTaskDialog();
+        dialog.dataset.editorId = edid;
+        dialog.showModal();
+        dialog.querySelector('[name="title"]').focus();
+        return false;
+    });
+    return true;
+}
+
+function getTaskDialog() {
+    let dialog = document.getElementById('todoistcompanion-add-dialog');
+    if (dialog) return dialog;
+
+    dialog = document.createElement('dialog');
+    dialog.id = 'todoistcompanion-add-dialog';
+    dialog.className = 'todoistcompanion-add-dialog';
+    dialog.setAttribute('aria-labelledby', 'todoistcompanion-add-title');
+    dialog.innerHTML = '<form class="todoistcompanion-add-form">' +
+        '<header class="todoistcompanion-add-header"><h2 id="todoistcompanion-add-title">Add a task</h2>' +
+        '<button class="todoistcompanion-add-close" type="button" aria-label="Close dialog">×</button></header>' +
+        '<label class="todoistcompanion-add-field">Task<input name="title" type="text" maxlength="500" autocomplete="off" required></label>' +
+        '<fieldset class="todoistcompanion-due-fields"><legend>Due date and time <span>(optional)</span></legend>' +
+        '<div class="todoistcompanion-due-inputs">' +
+        '<label class="todoistcompanion-add-field">Date<input name="date" type="date"></label>' +
+        '<label class="todoistcompanion-add-field">Time<input name="time" type="time" step="60"></label></div>' +
+        '<p class="todoistcompanion-add-help">Choose both to set the task’s due date and time in Todoist.</p></fieldset>' +
+        '<footer class="todoistcompanion-add-actions"><button class="todoistcompanion-add-cancel" type="button">Cancel</button>' +
+        '<button class="todoistcompanion-add-submit" type="submit">Add task</button></footer></form>';
+    document.body.appendChild(dialog);
+
+    const form = dialog.querySelector('form');
+    const date = form.elements.date;
+    const time = form.elements.time;
+    const today = localDateString(new Date());
+    date.min = today;
+    const updateTimeMinimum = function () {
+        time.min = date.value === today ? localTimeString(new Date()) : '';
+    };
+    date.addEventListener('change', updateTimeMinimum);
+    time.addEventListener('focus', updateTimeMinimum);
+
+    form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        date.setCustomValidity('');
+        time.setCustomValidity('');
+        if (!!date.value !== !!time.value) {
+            const message = 'Choose both a due date and time, or leave both empty.';
+            date.setCustomValidity(message);
+            time.setCustomValidity(message);
+            form.reportValidity();
+            return;
+        }
+        if (date.value && new Date(date.value + 'T' + time.value) <= new Date()) {
+            time.setCustomValidity('Choose a future date and time.');
+            form.reportValidity();
+            return;
+        }
+
+        const title = form.elements.title.value.trim().replace(/[{}|\r\n]+/g, ' ');
+        if (!title) {
+            form.elements.title.focus();
+            return;
+        }
         const alphabet = '0123456789abcdefghijklmnopqrstuvwxyz';
         const bytes = new Uint8Array(8);
         if (window.crypto && window.crypto.getRandomValues) {
@@ -11,11 +72,40 @@ function addBtnActionTodoistcompanion($btn, props, edid) {
             for (let i = 0; i < bytes.length; i++) bytes[i] = Math.random() * 256;
         }
         const taskId = Array.from(bytes, byte => alphabet[byte % alphabet.length]).join('');
-        const safeTitle = title.trim().replace(/[{}]/g, '');
-        insertAtCarret(edid, fixtxt('{{todoistcompanion>' + safeTitle + '|id=' + taskId + '}}'));
-        return false;
+        let syntax = '{{todoistcompanion>' + title + '|id=' + taskId;
+        if (date.value && time.value) {
+            const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+            syntax += '|due=' + date.value + 'T' + time.value + '|tz=' + timezone;
+        }
+        syntax += '}}';
+        insertAtCarret(dialog.dataset.editorId, fixtxt(syntax));
+        form.reset();
+        date.min = localDateString(new Date());
+        dialog.close();
     });
-    return true;
+
+    dialog.querySelector('.todoistcompanion-add-close').addEventListener('click', function () {
+        dialog.close();
+    });
+    dialog.querySelector('.todoistcompanion-add-cancel').addEventListener('click', function () {
+        dialog.close();
+    });
+    dialog.addEventListener('click', function (event) {
+        if (event.target === dialog) dialog.close();
+    });
+    dialog.addEventListener('close', function () {
+        form.reset();
+        date.min = localDateString(new Date());
+    });
+    return dialog;
+}
+
+function localDateString(date) {
+    return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
+}
+
+function localTimeString(date) {
+    return [String(date.getHours()).padStart(2, '0'), String(date.getMinutes()).padStart(2, '0')].join(':');
 }
 
 (function () {
@@ -35,7 +125,10 @@ function addBtnActionTodoistcompanion($btn, props, edid) {
             .attr('aria-busy', 'false')
             .attr('aria-label', completed ? 'Completed task' : 'Complete task')
             .prop('disabled', completed || !synced || !result.canComplete);
-        $status.removeClass('is-error').text(synced ? '' : 'Waiting for Todoist sync');
+        const statusText = !synced
+            ? 'Waiting for Todoist sync'
+            : (result.duePending ? 'Task date could not sync' : '');
+        $status.removeClass('is-error').text(statusText);
     }
 
     function loadTaskState(element) {

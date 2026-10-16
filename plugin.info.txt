@@ -3,5 +3,5 @@ author Kenan Akinci
 email  hey@kenan.fyi
 date   2026-10-16
 name   TodoistCompanion
-desc   Add page-linked tasks to Todoist and complete them from DokuWiki.
+desc   Add page-linked tasks with due dates to Todoist, then complete them from DokuWiki.
 url    https://developer.todoist.com/api/v1/
